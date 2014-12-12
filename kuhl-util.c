@@ -3034,10 +3034,6 @@ GLint kuhl_gen_framebuffer(int width, int height, GLuint *texture, GLuint *depth
 		                       *texture,      // texture id
 		                       0);            // mipmap level
 	}
-	else
-	  {
-	    glDrawBuffer(GL_NONE);
-	  }
 	kuhl_errorcheck();
 
 	if(depthTexture != NULL)
@@ -3050,38 +3046,10 @@ GLint kuhl_gen_framebuffer(int width, int height, GLuint *texture, GLuint *depth
 	}
 	kuhl_errorcheck();
 
-	GLenum fbStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-	if(fbStatus != GL_FRAMEBUFFER_COMPLETE)
+	if(glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
 	{
-	  printf("%s: glCheckFramebufferStatus() indicated a the following problem with the framebuffer:\n", __func__);
-	  switch(fbStatus)
-	    {
-	    case GL_FRAMEBUFFER_UNDEFINED:
-	      printf("%s: GL_FRAMEBUFFER_UNDEFINED\n", __func__);
-	      break;
-	    case GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT:
-	      printf("%s: GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT\n", __func__);
-	      break;
-	    case GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT:
-	      printf("%s: GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT\n", __func__);
-	      break;
-	    case GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER:
-	      printf("%s: GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER\n", __func__);
-	      break;
-	    case GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER:
-	      printf("%s: GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER\n", __func__);
-	      break;
-	    case GL_FRAMEBUFFER_UNSUPPORTED:
-	      printf("%s: GL_FRAMEBUFFER_UNSUPPORTED\n", __func__);
-	      break;
-	    case GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE:
-	      printf("%s: GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE\n", __func__);
-	      break;
-	    case GL_FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS:
-	      printf("%s: GL_FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS\n", __func__);
-	      break;
-	    }
-	  exit(EXIT_FAILURE);
+		printf("%s: Unable to set up framebuffer\n", __func__);
+		exit(1);
 	}
 	kuhl_errorcheck();
 

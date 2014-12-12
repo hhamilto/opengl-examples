@@ -1,3 +1,4 @@
+//@author Hurricane Hamilton
 /* This sample is based on a sample that is included with ASSIMP. Much
  * of the logic of the program was unchanged. However, texture loading
  * and other miscellaneous changes were made.
@@ -24,9 +25,16 @@ GLuint fpsLabel = 0;
 float fpsLabelAspectRatio = 0;
 kuhl_geometry labelQuad;
 
+GLuint depthFrameBuffer = 0;
+GLuint depthTexID = 0;
+
 GLuint program = 0; // id value for the GLSL program
 kuhl_geometry *modelgeom = NULL;
 float bbox[6];
+
+float ao_radius = 1;
+int ao_samples = 8;
+float ao_rangecheck = .001;
 
 /** Set this variable to 1 to force this program to scale the entire
  * model and translate it so that we can see the entire model. This is
@@ -47,29 +55,51 @@ float placeToPutModel[3] = { 0, 0, 0 };
 GLuint scene_list = 0; // display list for model
 char *modelFilename = NULL;
 char *modelTexturePath = NULL;
-int renderStyle = 0;
 
 
-#define GLSL_VERT_FILE "ogl3-assimp.vert"
-#define GLSL_FRAG_FILE "ogl3-assimp.frag"
+#define GLSL_VERT_FILE "ssao.vert"
+#define GLSL_FRAG_FILE "ssao.frag"
 
 /* Called by GLUT whenever a key is pressed. */
 void keyboard(unsigned char key, int x, int y)
 {
 	switch(key)
 	{
+
+		case 's':
+			ao_samples++;
+			printf("Samples: %d\n", ao_samples);
+			break;
+		case 'S':
+			ao_samples--;
+			break;
+		case 'r':
+			ao_radius+=.1;
+			break;
+		case 'R':
+			ao_radius-=.1;
+			break;
+		case 't':
+			ao_rangecheck+=.001;
+			break;
+		case 'T':
+			ao_rangecheck-=.001;
+			break;
+
 		case 'q':
 		case 'Q':
 		case 27: // ASCII code for Escape key
 			exit(0);
 			break;
-		case 'r':
+		case 'e':
 		{
 			// Reload GLSL program from disk
 			kuhl_delete_program(program);
 			program = kuhl_create_program(GLSL_VERT_FILE, GLSL_FRAG_FILE);
 			/* Apply the program to the model geometry */
 			kuhl_geometry_program(modelgeom, program, KG_FULL_LIST);
+			/*don't forget dat label*/
+			kuhl_geometry_program(&labelQuad, program, KG_FULL_LIST);
 
 			break;
 		}
@@ -174,21 +204,6 @@ void keyboard(unsigned char key, int x, int y)
 		}
 		
 		case ' ': // Toggle different sections of the GLSL fragment shader
-			renderStyle++;
-			if(renderStyle > 8)
-				renderStyle = 0;
-			switch(renderStyle)
-			{
-				case 0: printf("Render style: Diffuse (headlamp light)\n"); break;
-				case 1: printf("Render style: Texture (color is used on non-textured geometry)\n"); break;
-				case 2: printf("Render style: Vertex color\n"); break;
-				case 3: printf("Render style: Vertex color + diffuse (headlamp light)\n"); break;
-				case 4: printf("Render style: Normals\n"); break;
-				case 5: printf("Render style: Texture coordinates\n"); break;
-				case 6: printf("Render style: Front (green) and back (red) faces based on winding\n"); break;
-				case 7: printf("Render style: Front (green) and back (red) based on normals\n"); break;
-				case 8: printf("Render style: Depth (white=far; black=close)\n"); break;
-			}
 			break;
 	}
 
@@ -259,13 +274,10 @@ void display()
 		fpsLabelAspectRatio = kuhl_make_label(label,
 		                                      &fpsLabel,
 		                                      labelColor, labelBg, 128);
+
 		kuhl_geometry_texture(&labelQuad, fpsLabel, "tex", 1);
 	}
 	framesTillFpsUpdate--;
-
-	/* Ensure the slaves use the same render style as the master
-	 * process. */
-	dgr_setget("style", &renderStyle, sizeof(int));
 
 	// Clear the screen to black, clear the depth buffer
 	glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
@@ -299,6 +311,7 @@ void display()
 		viewmat_get(viewMat, f, viewportID);
 
 		glUseProgram(program);
+		glUniform1i(kuhl_get_uniform("fpsLabel"), 0);
 		/* Communicate matricies to OpenGL */
 		float perspective[16];
 		mat4f_frustum_new(perspective,f[0], f[1], f[2], f[3], f[4], f[5]);
@@ -318,14 +331,45 @@ void display()
 		                   0, // transpose
 		                   modelview); // value
 
-		glUniform1i(kuhl_get_uniform("renderStyle"), renderStyle);
-		// Copy far plane value into vertex program so we can render depth buffer.
-		glUniform1f(kuhl_get_uniform("farPlane"), f[5]);
-		
+		/******* SSAO DEPTH BUFFER FIRST PASS *******/
+		if(depthFrameBuffer == 0){
+			depthFrameBuffer = kuhl_gen_framebuffer(512, 512, NULL, &depthTexID);
+		}
+
+		// Save viewport
+		int origViewport[4];
+		glGetIntegerv(GL_VIEWPORT, origViewport);
+		// Switch to the framebuffer object
+		glBindFramebuffer(GL_FRAMEBUFFER, depthFrameBuffer);
+		glViewport(0,0,512,512);
+		glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+
+		//actual drawing for ssao
+		glUniform1i(kuhl_get_uniform("solid"), 1);
+		kuhl_errorcheck();
+		glUniform1f(kuhl_get_uniform("ao_radius"), ao_radius);
+		glUniform1i(kuhl_get_uniform("ao_samples"), ao_samples);
+		glUniform1f(kuhl_get_uniform("ao_rangecheck"), ao_rangecheck);
 		kuhl_errorcheck();
 		kuhl_geometry_draw(modelgeom); /* Draw the model */
 		kuhl_errorcheck();
 
+		// Go back to rendering on the screen:
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		// Restore viewport
+		glViewport(origViewport[0], origViewport[1], origViewport[2], origViewport[3]);
+
+		/****************** REST *****************/
+
+		// Copy far plane value into vertex program so we can render depth buffer.
+		glUniform1i(kuhl_get_uniform("solid"), 0);
+		kuhl_geometry_texture(modelgeom, depthTexID, "depthBufferTex", KG_WARN|KG_FULL_LIST);
+		kuhl_errorcheck();
+		kuhl_geometry_draw(modelgeom); /* Draw the model */
+		kuhl_errorcheck();
+
+
+		/******* FPS JUNK *******************************************/
 		/* The shape of the frames per second quad depends on the
 		 * aspect ratio of the label texture and the aspect ratio of
 		 * the window (because we are placing the quad in normalized
@@ -348,7 +392,7 @@ void display()
 		/* Don't use depth testing and make sure we use the texture
 		 * rendering style */
 		glDisable(GL_DEPTH_TEST);
-		glUniform1i(kuhl_get_uniform("renderStyle"), 1);
+		glUniform1i(kuhl_get_uniform("fpsLabel"), 1);
 		kuhl_geometry_draw(&labelQuad); /* Draw the quad */
 		glEnable(GL_DEPTH_TEST);
 		kuhl_errorcheck();
@@ -448,13 +492,13 @@ int main(int argc, char** argv)
 	glutInitWindowSize(512, 512);
 	/* Ask GLUT to for a double buffered, full color window that
 	 * includes a depth buffer */
-#ifdef __APPLE__
+	#ifdef __APPLE__
 	glutInitDisplayMode(GLUT_3_2_CORE_PROFILE | GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH | GLUT_MULTISAMPLE);
-#else
+	#else
 	glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_DEPTH | GLUT_MULTISAMPLE);
 	glutInitContextVersion(3,2);
 	glutInitContextProfile(GLUT_CORE_PROFILE);
-#endif
+	#endif
 	glutCreateWindow(argv[0]); // set window title to executable name
 	glEnable(GL_MULTISAMPLE);
 
